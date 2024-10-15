@@ -1,0 +1,49 @@
+# Description: Vagrantfile to create a kerberos server and client
+
+box = "ubuntu/jammy64"
+fqdn_root = "datalab.local"
+
+# Get the current directory
+FILE_PATH = File.dirname(__FILE__)
+
+MACHINES = {
+    "kerberos-server" => {"ip" => "192.168.56.101" },
+    "kerberos-client" => {"ip" => "192.168.56.102" },
+}
+
+HOSTS = MACHINES.map do |name, vm_config|
+    "#{vm_config["ip"]} #{name}.#{fqdn_root} #{name}"
+end
+
+Vagrant.configure("2") do |config|
+    MACHINES.each do |name, vm_config|
+        config.vm.define name do |machine|
+            machine.vm.box = box
+            machine.vm.hostname = "#{name}.#{fqdn_root}"
+            machine.vm.network "private_network", ip: vm_config["ip"]
+            config.ssh.insert_key = false
+
+            machine.vm.provider "virtualbox" do |vb|
+                vb.memory = "1024"
+                vb.cpus = "2"
+            end
+
+            if name == "kerberos-server"
+                machine.vm.provision "shell", path: "provision/kerberos.sh", args: ["server"]
+                machine.vm.provision "shell", inline: <<-SCRIPT
+                    # Create principal for host
+                    sudo kadmin.local -q "addprinc -randkey host/#{name}.#{fqdn_root}"
+                    sudo kadmin.local -q "ktadd host/#{name}.#{fqdn_root}"
+                SCRIPT
+            else
+                machine.vm.provision "shell", path: "provision/kerberos.sh", args: ["client"]
+            end
+
+            HOSTS.each do |host|
+                machine.vm.provision "shell", inline: <<-SCRIPT
+                    sudo sh -c 'echo "#{host}" >> /etc/hosts'
+                SCRIPT
+            end
+        end
+    end
+end
